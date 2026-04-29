@@ -1,0 +1,23 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./model/checkpoints:/app/model/checkpoints
+      - db_data:/app/db_data
+      - media_data:/app/media
+    environment:
+      - DJANGO_DEBUG=True
+      - DJANGO_SECRET_KEY=docker-dev-secret-key-change-in-production
+      - CHECKPOINT_PATH=/app/model/checkpoints/cosface_best.pt
+      - GALLERY_ROOT=/app/data
+      - DATA_ROOT=/app/data
+      - DJANGO_SUPERUSER_EMAIL=admin@example.com
+      - DJANGO_SUPERUSER_PASSWORD=admin123
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  media_data:

@@ -1,0 +1,365 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="AI-powered identity recognition using face analysis. Upload an image or use your webcam to identify people.">
+    <title>Identity Recognition</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        surface: {
+                            50: '#f8fafc',
+                            100: '#f1f5f9',
+                            200: '#e2e8f0',
+                            700: '#1e293b',
+                            800: '#0f172a',
+                            900: '#020617',
+                        },
+                        accent: {
+                            400: '#a78bfa',
+                            500: '#8b5cf6',
+                            600: '#7c3aed',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background: #020617;
+            min-height: 100vh;
+        }
+
+        .bg-mesh {
+            background:
+                radial-gradient(ellipse 80% 50% at 50% -20%, rgba(139, 92, 246, 0.15), transparent),
+                radial-gradient(ellipse 60% 40% at 80% 50%, rgba(59, 130, 246, 0.08), transparent),
+                radial-gradient(ellipse 60% 40% at 20% 80%, rgba(168, 85, 247, 0.08), transparent);
+        }
+
+        .glass {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(148, 163, 184, 0.1);
+        }
+
+        .glass-light {
+            background: rgba(30, 41, 59, 0.5);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(148, 163, 184, 0.08);
+        }
+
+        .drop-zone {
+            border: 2px dashed rgba(139, 92, 246, 0.3);
+            transition: all 0.3s ease;
+        }
+
+        .drop-zone:hover,
+        .drop-zone.dragover {
+            border-color: rgba(139, 92, 246, 0.7);
+            background: rgba(139, 92, 246, 0.05);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #7c3aed, #6d28d9);
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(124, 58, 237, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 20px rgba(124, 58, 237, 0.4);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+
+        .btn-secondary {
+            background: rgba(51, 65, 85, 0.6);
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            transition: all 0.3s ease;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(71, 85, 105, 0.6);
+            border-color: rgba(148, 163, 184, 0.25);
+        }
+
+        .fade-in {
+            animation: fadeIn 0.5s ease forwards;
+        }
+
+        .slide-up {
+            animation: slideUp 0.5s ease forwards;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .pulse-glow {
+            animation: pulseGlow 2s ease-in-out infinite;
+        }
+
+        @keyframes pulseGlow {
+            0%, 100% { box-shadow: 0 0 20px rgba(139, 92, 246, 0.2); }
+            50% { box-shadow: 0 0 40px rgba(139, 92, 246, 0.4); }
+        }
+
+        .confidence-bar {
+            transition: width 1s ease;
+        }
+
+        .avatar-ring {
+            background: linear-gradient(135deg, #7c3aed, #3b82f6, #7c3aed);
+            padding: 3px;
+        }
+
+        .spinner {
+            border: 3px solid rgba(139, 92, 246, 0.2);
+            border-top-color: #8b5cf6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .webcam-video {
+            transform: scaleX(-1);
+        }
+
+        input[type="text"] {
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            transition: border-color 0.3s ease;
+        }
+
+        input[type="text"]:focus {
+            border-color: rgba(139, 92, 246, 0.6);
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+        }
+
+        .modal-backdrop {
+            background: rgba(2, 6, 23, 0.8);
+            backdrop-filter: blur(4px);
+        }
+    </style>
+</head>
+<body class="bg-mesh text-slate-200 antialiased">
+
+    <div class="min-h-screen flex flex-col">
+
+        <header class="py-8 px-4 text-center">
+            <div class="inline-flex items-center gap-3 mb-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-blue-500 flex items-center justify-center">
+                    <i data-lucide="scan-face" class="w-5 h-5 text-white"></i>
+                </div>
+                <h1 class="text-3xl md:text-4xl font-bold bg-gradient-to-r from-violet-400 via-purple-400 to-blue-400 bg-clip-text text-transparent">
+                    Identity Recognition
+                </h1>
+            </div>
+            <p class="text-slate-400 text-sm md:text-base max-w-lg mx-auto">
+                Upload an image or use your webcam to identify people using AI-powered face recognition
+            </p>
+        </header>
+
+        <main class="flex-1 px-4 pb-12 max-w-4xl mx-auto w-full">
+
+            <div id="upload-section" class="glass rounded-2xl p-6 md:p-8 mb-6 slide-up">
+                <div class="flex items-center gap-2 mb-6">
+                    <i data-lucide="image-plus" class="w-5 h-5 text-violet-400"></i>
+                    <h2 class="text-lg font-semibold text-slate-100">Provide an Image</h2>
+                </div>
+
+                <div id="drop-zone" class="drop-zone rounded-xl p-10 text-center cursor-pointer mb-4">
+                    <div id="drop-zone-content">
+                        <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-violet-500/10 mb-4">
+                            <i data-lucide="upload-cloud" class="w-8 h-8 text-violet-400"></i>
+                        </div>
+                        <p class="text-slate-300 font-medium mb-1">Drop your image here or click to browse</p>
+                        <p class="text-slate-500 text-sm">Supports JPG, PNG, BMP, WebP</p>
+                    </div>
+                    <div id="preview-container" class="hidden">
+                        <img id="preview-image" class="max-h-64 mx-auto rounded-lg shadow-lg" alt="Preview">
+                        <p id="preview-filename" class="text-slate-400 text-sm mt-3"></p>
+                    </div>
+                    <input type="file" id="file-input" accept="image/*" class="hidden">
+                </div>
+
+                <div class="flex flex-col sm:flex-row gap-3">
+                    <button id="btn-webcam" class="btn-secondary flex-1 py-3 px-5 rounded-xl text-sm font-medium text-slate-200 flex items-center justify-center gap-2">
+                        <i data-lucide="camera" class="w-4 h-4"></i>
+                        Use Webcam
+                    </button>
+                    <button id="btn-recognize" class="btn-primary flex-1 py-3 px-5 rounded-xl text-sm font-medium text-white flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                        <i data-lucide="search" class="w-4 h-4"></i>
+                        Recognize Identity
+                    </button>
+                </div>
+            </div>
+
+            <div id="loading-section" class="hidden glass rounded-2xl p-10 text-center mb-6 fade-in">
+                <div class="spinner mx-auto mb-4"></div>
+                <p class="text-slate-300 font-medium">Analyzing image...</p>
+                <p class="text-slate-500 text-sm mt-1">Running face recognition model</p>
+            </div>
+
+            <div id="result-section" class="hidden mb-6 slide-up">
+
+                <div id="result-found" class="hidden">
+                    <div class="glass rounded-2xl p-6 md:p-8">
+                        <div class="flex items-center gap-2 mb-6">
+                            <i data-lucide="check-circle-2" class="w-5 h-5 text-emerald-400"></i>
+                            <h2 class="text-lg font-semibold text-slate-100">Identity Recognized</h2>
+                        </div>
+
+                        <div class="flex flex-col md:flex-row items-center gap-6">
+                            <div class="avatar-ring rounded-full shrink-0">
+                                <img id="result-avatar" class="w-28 h-28 rounded-full object-cover" alt="Avatar">
+                            </div>
+                            <div class="flex-1 text-center md:text-left">
+                                <h3 id="result-title" class="text-2xl font-bold text-white mb-1"></h3>
+                                <p id="result-class" class="text-slate-400 text-sm mb-4 flex items-center justify-center md:justify-start gap-1.5">
+                                    <i data-lucide="hash" class="w-3.5 h-3.5"></i>
+                                    <span></span>
+                                </p>
+
+                                <div class="glass-light rounded-xl p-4">
+                                    <div class="flex items-center justify-between mb-2">
+                                        <span class="text-sm text-slate-400 flex items-center gap-1.5">
+                                            <i data-lucide="gauge" class="w-3.5 h-3.5"></i>
+                                            Confidence
+                                        </span>
+                                        <span id="result-confidence-text" class="text-sm font-semibold text-violet-400"></span>
+                                    </div>
+                                    <div class="w-full bg-slate-700/50 rounded-full h-2">
+                                        <div id="result-confidence-bar" class="confidence-bar h-2 rounded-full bg-gradient-to-r from-violet-500 to-blue-500" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="result-not-found" class="hidden">
+                    <div class="glass rounded-2xl p-6 md:p-8">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i data-lucide="user-x" class="w-5 h-5 text-amber-400"></i>
+                            <h2 class="text-lg font-semibold text-slate-100">Identity Not Found</h2>
+                        </div>
+                        <p class="text-slate-400 text-sm mb-4">
+                            Predicted class <span id="notfound-class" class="font-mono text-violet-400"></span>
+                            with <span id="notfound-confidence" class="font-semibold text-violet-400"></span>% confidence,
+                            but no matching identity exists in the database.
+                        </p>
+
+                        <div class="glass-light rounded-xl p-5">
+                            <div class="flex items-center gap-2 mb-4">
+                                <i data-lucide="user-plus" class="w-4 h-4 text-violet-400"></i>
+                                <h3 class="font-semibold text-slate-200">Add New Identity</h3>
+                            </div>
+
+                            <form id="add-identity-form" class="space-y-4">
+                                <div>
+                                    <label for="new-title" class="block text-sm text-slate-400 mb-1.5">Title</label>
+                                    <input type="text" id="new-title" placeholder="Enter identity name..." class="w-full px-4 py-2.5 rounded-lg text-sm text-slate-200 placeholder-slate-500">
+                                </div>
+
+                                <div class="flex items-center gap-3 p-3 rounded-lg bg-slate-800/50">
+                                    <img id="new-avatar-preview" class="w-12 h-12 rounded-lg object-cover" alt="Avatar preview">
+                                    <div>
+                                        <p class="text-sm text-slate-300">Uploaded image as avatar</p>
+                                        <p id="new-class-id" class="text-xs text-slate-500 font-mono"></p>
+                                    </div>
+                                </div>
+
+                                <button type="submit" id="btn-add-identity" class="btn-primary w-full py-3 px-5 rounded-xl text-sm font-medium text-white flex items-center justify-center gap-2">
+                                    <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                                    Add Identity
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="result-added" class="hidden">
+                    <div class="glass rounded-2xl p-6 md:p-8 text-center">
+                        <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-emerald-500/10 mb-4">
+                            <i data-lucide="check" class="w-8 h-8 text-emerald-400"></i>
+                        </div>
+                        <h2 class="text-xl font-bold text-white mb-2">Identity Added</h2>
+                        <p id="added-message" class="text-slate-400 text-sm"></p>
+                        <button id="btn-reset" class="btn-secondary mt-6 py-2.5 px-6 rounded-xl text-sm font-medium text-slate-200 inline-flex items-center gap-2">
+                            <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+                            Recognize Another
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+
+        </main>
+
+        <footer class="py-6 text-center text-slate-600 text-xs">
+            <p>Powered by CosFace &middot; ResNet-50 Embedding Network</p>
+        </footer>
+
+    </div>
+
+    <div id="webcam-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-backdrop">
+        <div class="glass rounded-2xl p-6 w-full max-w-lg mx-4">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="camera" class="w-5 h-5 text-violet-400"></i>
+                    <h2 class="text-lg font-semibold text-slate-100">Webcam Capture</h2>
+                </div>
+                <button id="btn-webcam-close" class="p-2 rounded-lg hover:bg-slate-700/50 transition-colors">
+                    <i data-lucide="x" class="w-5 h-5 text-slate-400"></i>
+                </button>
+            </div>
+            <div class="rounded-xl overflow-hidden bg-black mb-4 aspect-video relative">
+                <video id="webcam-video" class="webcam-video w-full h-full object-cover" autoplay playsinline></video>
+                <canvas id="webcam-canvas" class="hidden"></canvas>
+            </div>
+            <button id="btn-webcam-capture" class="btn-primary w-full py-3 px-5 rounded-xl text-sm font-medium text-white flex items-center justify-center gap-2">
+                <i data-lucide="aperture" class="w-4 h-4"></i>
+                Capture Photo
+            </button>
+        </div>
+    </div>
+
+    <script src="{% static 'recognition/app.js' %}"></script>
+    <script>lucide.createIcons();</script>
+</body>
+</html>
