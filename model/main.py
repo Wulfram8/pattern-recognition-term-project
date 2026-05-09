@@ -8,26 +8,26 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
-from app.model import CosFaceService
+from app.model import FaceIdentificationService
 
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 
 app = FastAPI(
-    title="CosFace Face Recognition Deployment",
-    description="Step 4 deployment: Docker + FastAPI backend + HTML interface.",
-    version="1.0.0",
+    title="Face Identification Deployment",
+    description="Face identification using CosFace",
+    version="2.0.0",
 )
 
-service: Optional[CosFaceService] = None
+service: Optional[FaceIdentificationService] = None
 
 
 @app.on_event("startup")
 def startup():
     global service
 
-    service = CosFaceService(
+    service = FaceIdentificationService(
         checkpoint_path=os.getenv("CHECKPOINT_PATH", "/models/cosface_best.pt"),
         gallery_root=os.getenv("GALLERY_ROOT", "/data/gallery"),
         gallery_cache=os.getenv("GALLERY_CACHE", "/models/gallery_cache.pt"),

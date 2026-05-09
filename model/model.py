@@ -1,4 +1,3 @@
-import math
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -16,121 +15,77 @@ IMAGENET_STD = [0.229, 0.224, 0.225]
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
-class ResNet50FaceEmbedder(nn.Module):
-    """
-    This matches your training notebook:
+def make_resnet_backbone(backbone="resnet34", pretrained=False):
 
-    ResNet50 ImageNet backbone
-    -> remove final classifier
-    -> BatchNorm
-    -> Dropout
-    -> Linear to 512-d embedding
-    -> BatchNorm
-    -> L2 normalize
+    if backbone == "resnet18":
+        weights = models.ResNet18_Weights.DEFAULT if pretrained else None
+        base = models.resnet18(weights=weights)
+    elif backbone == "resnet34":
+        weights = models.ResNet34_Weights.DEFAULT if pretrained else None
+        base = models.resnet34(weights=weights)
+    else:
+        raise ValueError(f"Unsupported backbone: {backbone}")
+    return base
 
-    In deployment we use weights=None because the trained weights are loaded
-    from your checkpoint. Docker does not need to download ImageNet weights.
-    """
 
-    def __init__(self, emb_dim: int = 512, dropout: float = 0.20):
+class ResNetEmbedding(nn.Module):
+
+    def __init__(self, backbone="resnet34", emb_dim=512, pretrained=False, dropout=0.10):
         super().__init__()
-        base = models.resnet50(weights=None)
-        in_dim = base.fc.in_features
+        base = make_resnet_backbone(backbone=backbone, pretrained=pretrained)
+        in_features = base.fc.in_features
         base.fc = nn.Identity()
-
         self.backbone = base
         self.neck = nn.Sequential(
-            nn.BatchNorm1d(in_dim),
             nn.Dropout(p=dropout),
-            nn.Linear(in_dim, emb_dim, bias=False),
+            nn.Linear(in_features, emb_dim, bias=False),
             nn.BatchNorm1d(emb_dim),
         )
+        nn.init.xavier_uniform_(self.neck[1].weight)
 
-        # Same face-recognition trick used in training.
-        nn.init.constant_(self.neck[-1].weight, 1.0)
-        nn.init.constant_(self.neck[-1].bias, 0.0)
-        self.neck[-1].bias.requires_grad_(False)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        z = self.backbone(x)
-        z = self.neck(z)
-        return F.normalize(z, p=2, dim=1)
+    def forward(self, x):
+        feat = self.backbone(x)
+        raw_emb = self.neck(feat)
+        emb = F.normalize(raw_emb, p=2, dim=1)
+        return {"embeddings": emb, "raw_embeddings": raw_emb, "norms": raw_emb.norm(p=2, dim=1)}
 
 
-class MarginHead(nn.Module):
-    """
-    Training-compatible margin head.
+class CosFaceHead(nn.Module):
 
-    The checkpoint stores head.weight.
-    For deployment, prediction uses class-center cosine logits:
-        logits = s * cosine(embedding, class_weight)
-
-    We do not subtract the CosFace margin during inference because there is
-    no ground-truth class label at prediction time.
-    """
-
-    def __init__(
-        self,
-        emb_dim: int,
-        num_classes: int,
-        method: str = "cosface",
-        s: float = 64.0,
-        m: float = 0.35,
-    ):
+    def __init__(self, emb_dim, num_classes, s=48.0, m=0.25):
         super().__init__()
-        self.method = method
         self.s = float(s)
-        self.target_m = float(m)
-        self.current_m = float(m)
+        self.m = float(m)
         self.weight = nn.Parameter(torch.empty(num_classes, emb_dim))
         nn.init.xavier_uniform_(self.weight)
 
-        if method == "arcface":
-            self._update_arc_constants()
-
-    def _update_arc_constants(self):
-        m = self.current_m
-        self.cos_m = math.cos(m)
-        self.sin_m = math.sin(m)
-        self.th = math.cos(math.pi - m)
-        self.mm = math.sin(math.pi - m) * m
-
-    def set_margin_scale(self, scale: float):
-        self.current_m = self.target_m * float(scale)
-        if self.method == "arcface":
-            self._update_arc_constants()
-
-    def forward(self, emb: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        cosine = F.linear(F.normalize(emb), F.normalize(self.weight)).clamp(
-            -1.0 + 1e-7, 1.0 - 1e-7
-        )
-
-        if self.method == "softmax":
-            return cosine * self.s
-
+    def forward(self, embeddings, labels=None):
+        embeddings = F.normalize(embeddings, p=2, dim=1)
+        weight = F.normalize(self.weight, p=2, dim=1)
+        cosine = F.linear(embeddings, weight)
+        if labels is None:
+            return self.s * cosine
         one_hot = torch.zeros_like(cosine)
         one_hot.scatter_(1, labels.view(-1, 1), 1.0)
+        logits = cosine - one_hot * self.m
+        return self.s * logits
 
-        if self.method == "cosface":
-            phi = cosine - self.current_m
-        elif self.method == "arcface":
-            sine = torch.sqrt((1.0 - cosine.pow(2)).clamp(0.0, 1.0))
-            phi = cosine * self.cos_m - sine * self.sin_m
-            phi = torch.where(cosine > self.th, phi, cosine - self.mm)
-        else:
-            raise ValueError(f"Unknown method: {self.method}")
 
-        logits = (one_hot * phi) + ((1.0 - one_hot) * cosine)
-        return logits * self.s
+class CosFaceModel(nn.Module):
 
-    @torch.no_grad()
-    def inference_logits(self, emb: torch.Tensor) -> torch.Tensor:
-        cosine = F.linear(F.normalize(emb), F.normalize(self.weight)).clamp(-1.0, 1.0)
-        return cosine * self.s
+    def __init__(self, num_classes, backbone="resnet34", emb_dim=512,
+                 pretrained=False, dropout=0.10, cosface_s=48.0, cosface_m=0.25):
+        super().__init__()
+        self.encoder = ResNetEmbedding(backbone, emb_dim, pretrained, dropout)
+        self.head = CosFaceHead(emb_dim, num_classes, s=cosface_s, m=cosface_m)
+
+    def forward(self, x, labels=None):
+        out = self.encoder(x)
+        out["logits"] = self.head(out["embeddings"], labels)
+        return out
 
 
 def strip_module_prefix(state_dict: Dict[str, Any]) -> Dict[str, Any]:
-    """Supports checkpoints saved with or without nn.DataParallel."""
     if not any(k.startswith("module.") for k in state_dict.keys()):
         return state_dict
     return {k.replace("module.", "", 1): v for k, v in state_dict.items()}
@@ -143,13 +98,13 @@ def safe_torch_load(path: str, map_location="cpu"):
         return torch.load(path, map_location=map_location)
 
 
-def read_cfg(cfg: Dict[str, Any], key: str, default: Any) -> Any:
+def read_cfg(cfg, key: str, default):
     if not isinstance(cfg, dict):
         return default
     return cfg.get(key, default)
 
 
-class CosFaceService:
+class FaceIdentificationService:
     def __init__(
         self,
         checkpoint_path: str,
@@ -165,16 +120,16 @@ class CosFaceService:
         self.gallery_images_per_identity = int(gallery_images_per_identity)
 
         if device == "auto":
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.device = torch.device(
+                "cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = torch.device(device)
 
-        self.cfg = {}
-        self.method = "cosface"
-        self.label_to_identity: Dict[int, str] = {}
+        self.cfg: Dict[str, Any] = {}
+        self.num_classes: int = 0
+        self.model_name: str = "cosface"
 
-        self.embedder: Optional[ResNet50FaceEmbedder] = None
-        self.head: Optional[MarginHead] = None
+        self.model: Optional[CosFaceModel] = None
 
         self.gallery_labels: List[str] = []
         self.gallery_prototypes: Optional[torch.Tensor] = None
@@ -193,60 +148,60 @@ class CosFaceService:
         if not ckpt_path.exists():
             raise FileNotFoundError(
                 f"Checkpoint not found at {ckpt_path}. "
-                "Copy your CosFace checkpoint to models/cosface_best.pt."
+                "Copy your CosFace checkpoint to model/checkpoints/cosface_best.pt."
             )
 
         ckpt = safe_torch_load(str(ckpt_path), map_location="cpu")
 
-        if "embedder" not in ckpt or "head" not in ckpt:
+        # The notebook saves: model_name, epoch, best_val_top1,
+        # model_state_dict, optimizer_state_dict, scheduler_state_dict,
+        # cfg (dataclass as dict), num_classes.
+        if "model_state_dict" not in ckpt:
             raise KeyError(
-                "This app expects the checkpoint from your notebook with keys: "
-                "'embedder', 'head', 'cfg', and 'id_to_label'."
+                "This app expects the checkpoint from the training notebook with key "
+                "'model_state_dict'. Found keys: " + str(list(ckpt.keys()))
             )
 
         self.cfg = ckpt.get("cfg", {}) or {}
-        self.method = str(ckpt.get("method", "cosface")).lower()
+        self.model_name = str(ckpt.get("model_name", "cosface")).lower()
+        self.num_classes = int(ckpt.get("num_classes", 0))
 
-        embedder_state = strip_module_prefix(ckpt["embedder"])
-        head_state = strip_module_prefix(ckpt["head"])
+        # Read hyper-parameters from the saved config
+        backbone = str(read_cfg(self.cfg, "backbone", "resnet34"))
+        emb_dim = int(read_cfg(self.cfg, "embedding_dim", 512))
+        dropout = float(read_cfg(self.cfg, "dropout", 0.10))
+        img_size = int(read_cfg(self.cfg, "img_size", 112))
+        cosface_s = float(read_cfg(self.cfg, "cosface_s", 48.0))
+        cosface_m = float(read_cfg(self.cfg, "cosface_m", 0.25))
 
-        num_classes, emb_dim_from_head = head_state["weight"].shape
+        # If num_classes wasn't saved, try to infer from head weight shape
+        if self.num_classes == 0:
+            state = strip_module_prefix(ckpt["model_state_dict"])
+            for key in ("head.weight",):
+                if key in state:
+                    self.num_classes = state[key].shape[0]
+                    break
 
-        emb_dim = int(read_cfg(self.cfg, "emb_dim", int(emb_dim_from_head)))
-        dropout = float(read_cfg(self.cfg, "dropout", 0.20))
-        image_size = int(read_cfg(self.cfg, "image_size", 112))
-        scale_s = float(read_cfg(self.cfg, "scale_s", 64.0))
-        cosface_m = float(read_cfg(self.cfg, "cosface_m", 0.35))
-
-        self.embedder = ResNet50FaceEmbedder(emb_dim=emb_dim, dropout=dropout)
-        self.head = MarginHead(
+        self.model = CosFaceModel(
+            num_classes=self.num_classes,
+            backbone=backbone,
             emb_dim=emb_dim,
-            num_classes=int(num_classes),
-            method=self.method,
-            s=scale_s,
-            m=cosface_m,
+            pretrained=False,
+            dropout=dropout,
+            cosface_s=cosface_s,
+            cosface_m=cosface_m,
         )
 
-        self.embedder.load_state_dict(embedder_state, strict=True)
-        self.head.load_state_dict(head_state, strict=True)
+        model_state = strip_module_prefix(ckpt["model_state_dict"])
+        self.model.load_state_dict(model_state, strict=True)
+        self.model.to(self.device).eval()
 
-        self.embedder.to(self.device).eval()
-        self.head.to(self.device).eval()
-
-        # Your notebook saves id_to_label as identity -> integer label.
-        raw_id_to_label = ckpt.get("id_to_label", {}) or {}
-        if raw_id_to_label:
-            self.label_to_identity = {int(v): str(k) for k, v in raw_id_to_label.items()}
-        else:
-            self.label_to_identity = {i: f"class_{i}" for i in range(int(num_classes))}
-
-        self.transform = T.Compose(
-            [
-                T.Resize((image_size, image_size)),
-                T.ToTensor(),
-                T.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-            ]
-        )
+        self.transform = T.Compose([
+            T.Resize((img_size, img_size),
+                     interpolation=T.InterpolationMode.BICUBIC),
+            T.ToTensor(),
+            T.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+        ])
 
     def preprocess(self, image: Image.Image) -> torch.Tensor:
         image = ImageOps.exif_transpose(image).convert("RGB")
@@ -255,81 +210,72 @@ class CosFaceService:
     @torch.no_grad()
     def embed_image(self, image: Image.Image) -> torch.Tensor:
         x = self.preprocess(image)
-        emb = self.embedder(x)
-        return F.normalize(emb, p=2, dim=1)
+        out = self.model.encoder(x)
+        return out["embeddings"]  # already L2-normalized
+
+    # ------------------------------------------------------------------
+    # Prediction / identification
+    # ------------------------------------------------------------------
 
     @torch.no_grad()
     def predict(self, image: Image.Image, top_k: int = 5) -> Dict[str, Any]:
+        """Identify a face using Prototype-Centroid Retrieval.
+
+        The CosFace backbone is used purely as an embedding extractor.
+        Identification is performed by computing cosine similarity between
+        the probe embedding and each gallery identity centroid (prototype).
+        """
         top_k = max(1, min(int(top_k), 20))
         emb = self.embed_image(image)
 
-        logits = self.head.inference_logits(emb)
-        probs = torch.softmax(logits, dim=1)
-        values, indices = torch.topk(probs, k=min(top_k, probs.shape[1]), dim=1)
-        cosine_scores = (logits / self.head.s)[0, indices[0]]
+        if self.gallery_prototypes is None or len(self.gallery_labels) == 0:
+            return {
+                "prediction": {
+                    "source": "prototype_centroid_retrieval",
+                    "identity": "unknown",
+                    "confidence": 0.0,
+                    "cosine_similarity": 0.0,
+                },
+                "topk": [],
+                "model": self.info(),
+                "error": "Gallery not loaded. No identities to match against.",
+            }
 
-        head_topk = []
-        for rank, (p, idx, cos) in enumerate(
-            zip(
-                values[0].detach().cpu().tolist(),
-                indices[0].detach().cpu().tolist(),
-                cosine_scores.detach().cpu().tolist(),
-            ),
+        # Cosine similarity between probe and every gallery centroid
+        prototypes = self.gallery_prototypes.to(self.device)
+        sims = (emb @ prototypes.T).squeeze(0)
+
+        # Temperature-scaled softmax gives probability-like confidence scores
+        gallery_probs = torch.softmax(sims * 30.0, dim=0)
+
+        g_values, g_indices = torch.topk(
+            gallery_probs, k=min(top_k, gallery_probs.shape[0]), dim=0
+        )
+
+        topk = []
+        for rank, (p, idx) in enumerate(
+            zip(g_values.detach().cpu().tolist(),
+                g_indices.detach().cpu().tolist()),
             start=1,
         ):
-            head_topk.append(
-                {
-                    "rank": rank,
-                    "label_index": int(idx),
-                    "identity": self.label_to_identity.get(int(idx), f"class_{idx}"),
-                    "probability": float(p),
-                    "cosine_similarity_to_class_weight": float(cos),
-                }
-            )
+            idx = int(idx)
+            topk.append({
+                "rank": rank,
+                "identity": self.gallery_labels[idx],
+                "probability": float(p),
+                "cosine_similarity": float(sims[idx].detach().cpu()),
+            })
 
-        gallery_topk = []
-        if self.gallery_prototypes is not None and len(self.gallery_labels) > 0:
-            prototypes = self.gallery_prototypes.to(self.device)
-            sims = (emb @ prototypes.T).squeeze(0)
-            # Temperature scaling produces a probability-like confidence over gallery identities.
-            gallery_probs = torch.softmax(sims * 30.0, dim=0)
-            g_values, g_indices = torch.topk(
-                gallery_probs, k=min(top_k, gallery_probs.shape[0]), dim=0
-            )
-
-            for rank, (p, idx) in enumerate(
-                zip(g_values.detach().cpu().tolist(), g_indices.detach().cpu().tolist()),
-                start=1,
-            ):
-                idx = int(idx)
-                gallery_topk.append(
-                    {
-                        "rank": rank,
-                        "identity": self.gallery_labels[idx],
-                        "probability": float(p),
-                        "cosine_similarity": float(sims[idx].detach().cpu()),
-                    }
-                )
-
-        if gallery_topk:
-            prediction = {
-                "source": "gallery_prototype_search",
-                "identity": gallery_topk[0]["identity"],
-                "confidence": gallery_topk[0]["probability"],
-                "cosine_similarity": gallery_topk[0]["cosine_similarity"],
-            }
-        else:
-            prediction = {
-                "source": "cosface_head",
-                "identity": head_topk[0]["identity"],
-                "confidence": head_topk[0]["probability"],
-                "cosine_similarity": head_topk[0]["cosine_similarity_to_class_weight"],
-            }
+        prediction = {
+            "source": "prototype_centroid_retrieval",
+            "identity": topk[0]["identity"],
+            "confidence": topk[0]["probability"],
+            "cosine_similarity": topk[0]["cosine_similarity"],
+        }
 
         return {
             "prediction": prediction,
-            "head_topk": head_topk,
-            "gallery_topk": gallery_topk,
+            "topk": topk,
             "model": self.info(),
         }
 
@@ -338,10 +284,13 @@ class CosFaceService:
         if not root.exists():
             return {"gallery_size": 0, "message": f"Gallery root not found: {root}"}
 
-        labels = []
-        prototypes = []
+        labels: List[str] = []
+        prototypes: List[torch.Tensor] = []
 
-        identity_dirs = sorted([p for p in root.iterdir() if p.is_dir()], key=lambda p: p.name)
+        identity_dirs = sorted(
+            [p for p in root.iterdir() if p.is_dir()],
+            key=lambda p: p.name,
+        )
 
         for identity_dir in identity_dirs:
             image_paths = sorted(
@@ -402,19 +351,20 @@ class CosFaceService:
         self.gallery_labels = [str(x) for x in payload.get("labels", [])]
         self.gallery_prototypes = payload.get("prototypes", None)
         if self.gallery_prototypes is not None:
-            self.gallery_prototypes = F.normalize(self.gallery_prototypes.float(), p=2, dim=1)
+            self.gallery_prototypes = F.normalize(
+                self.gallery_prototypes.float(), p=2, dim=1)
 
     def info(self) -> Dict[str, Any]:
         return {
             "checkpoint_path": self.checkpoint_path,
             "device": str(self.device),
-            "method": self.method,
-            "backbone": "resnet50_imagenet_pretrained_structure",
-            "image_size": int(read_cfg(self.cfg, "image_size", 112)),
-            "embedding_dim": int(read_cfg(self.cfg, "emb_dim", 512)),
-            "scale_s": float(read_cfg(self.cfg, "scale_s", 64.0)),
-            "cosface_m": float(read_cfg(self.cfg, "cosface_m", 0.35)),
-            "num_classes": len(self.label_to_identity),
+            "model_name": self.model_name,
+            "backbone": str(read_cfg(self.cfg, "backbone", "resnet34")),
+            "image_size": int(read_cfg(self.cfg, "img_size", 112)),
+            "embedding_dim": int(read_cfg(self.cfg, "embedding_dim", 512)),
+            "cosface_s": float(read_cfg(self.cfg, "cosface_s", 48.0)),
+            "cosface_m": float(read_cfg(self.cfg, "cosface_m", 0.25)),
+            "num_classes": self.num_classes,
             "gallery_loaded": self.gallery_prototypes is not None,
             "gallery_size": len(self.gallery_labels),
         }

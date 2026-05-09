@@ -15,9 +15,10 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 class Command(BaseCommand):
 
     def handle(self, *args, **options):
-        data_root = Path(settings.DATA_ROOT)
-        if not data_root.exists():
-            self.stdout.write(self.style.ERROR(f"Data root not found: {data_root}"))
+        # Gallery images live under data/train (folder-per-identity)
+        gallery_root = Path(settings.GALLERY_ROOT)
+        if not gallery_root.exists():
+            self.stdout.write(self.style.ERROR(f"Gallery root not found: {gallery_root}"))
             return
 
         media_avatars = Path(settings.MEDIA_ROOT) / "avatars"
@@ -26,7 +27,7 @@ class Command(BaseCommand):
         service = get_service()
 
         identity_dirs = sorted(
-            [p for p in data_root.iterdir() if p.is_dir()],
+            [p for p in gallery_root.iterdir() if p.is_dir()],
             key=lambda p: p.name,
         )
 
@@ -50,8 +51,7 @@ class Command(BaseCommand):
                 self.stdout.write(f"Skipping {identity_dir.name} -> {class_id} (already exists)")
                 continue
 
-            number = identity_dir.name.replace("identity_", "").lstrip("0") or "0"
-            title = f"Identity {number}"
+            title = f"Identity {identity_dir.name}"
 
             identity = Identity(title=title, class_id=class_id)
             avatar_name = f"{class_id}{first_image.suffix.lower()}"

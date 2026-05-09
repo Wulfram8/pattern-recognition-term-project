@@ -9,7 +9,7 @@ echo "Seeding identities..."
 python manage.py seed_identities
 
 echo "Creating superuser..."
-python manage.py createsuperuser --noinput --username admin --email "$DJANGO_SUPERUSER_EMAIL" 2>/dev/null || true
+python manage.py createsuperuser --noinput
 
 echo "Collecting static files..."
 python manage.py collectstatic --noinput

@@ -7,24 +7,16 @@ document.addEventListener("DOMContentLoaded", function () {
     const previewImage = document.getElementById("preview-image");
     const previewFilename = document.getElementById("preview-filename");
     const btnRecognize = document.getElementById("btn-recognize");
-    const btnWebcam = document.getElementById("btn-webcam");
     const uploadSection = document.getElementById("upload-section");
     const loadingSection = document.getElementById("loading-section");
     const resultSection = document.getElementById("result-section");
     const resultFound = document.getElementById("result-found");
     const resultNotFound = document.getElementById("result-not-found");
     const resultAdded = document.getElementById("result-added");
-    const webcamModal = document.getElementById("webcam-modal");
-    const webcamVideo = document.getElementById("webcam-video");
-    const webcamCanvas = document.getElementById("webcam-canvas");
-    const btnWebcamClose = document.getElementById("btn-webcam-close");
-    const btnWebcamCapture = document.getElementById("btn-webcam-capture");
     const addIdentityForm = document.getElementById("add-identity-form");
     const btnReset = document.getElementById("btn-reset");
 
     let currentFile = null;
-    let currentBase64 = null;
-    let webcamStream = null;
 
     dropZone.addEventListener("click", function () {
         fileInput.click();
@@ -56,7 +48,6 @@ document.addEventListener("DOMContentLoaded", function () {
     function handleFile(file) {
         if (!file.type.startsWith("image/")) return;
         currentFile = file;
-        currentBase64 = null;
         const reader = new FileReader();
         reader.onload = function (e) {
             previewImage.src = e.target.result;
@@ -68,70 +59,15 @@ document.addEventListener("DOMContentLoaded", function () {
         reader.readAsDataURL(file);
     }
 
-    function setBase64Image(dataUrl) {
-        currentFile = null;
-        currentBase64 = dataUrl;
-        previewImage.src = dataUrl;
-        previewFilename.textContent = "Webcam capture";
-        dropZoneContent.classList.add("hidden");
-        previewContainer.classList.remove("hidden");
-        btnRecognize.disabled = false;
-    }
-
-    btnWebcam.addEventListener("click", async function () {
-        webcamModal.classList.remove("hidden");
-        try {
-            webcamStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: 640, height: 480 } });
-            webcamVideo.srcObject = webcamStream;
-        } catch (err) {
-            closeWebcam();
-        }
-    });
-
-    btnWebcamClose.addEventListener("click", closeWebcam);
-
-    webcamModal.addEventListener("click", function (e) {
-        if (e.target === webcamModal) closeWebcam();
-    });
-
-    function closeWebcam() {
-        webcamModal.classList.add("hidden");
-        if (webcamStream) {
-            webcamStream.getTracks().forEach(function (t) { t.stop(); });
-            webcamStream = null;
-        }
-    }
-
-    btnWebcamCapture.addEventListener("click", function () {
-        webcamCanvas.width = webcamVideo.videoWidth;
-        webcamCanvas.height = webcamVideo.videoHeight;
-        const ctx = webcamCanvas.getContext("2d");
-        ctx.translate(webcamCanvas.width, 0);
-        ctx.scale(-1, 1);
-        ctx.drawImage(webcamVideo, 0, 0);
-        const dataUrl = webcamCanvas.toDataURL("image/jpeg", 0.92);
-        setBase64Image(dataUrl);
-        closeWebcam();
-    });
-
     btnRecognize.addEventListener("click", async function () {
         uploadSection.style.display = "none";
         resultSection.classList.add("hidden");
         loadingSection.classList.remove("hidden");
 
         try {
-            let response;
-            if (currentFile) {
-                const formData = new FormData();
-                formData.append("image", currentFile);
-                response = await fetch("/api/predict/", { method: "POST", body: formData });
-            } else if (currentBase64) {
-                response = await fetch("/api/predict/", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ image_base64: currentBase64 }),
-                });
-            }
+            const formData = new FormData();
+            formData.append("image", currentFile);
+            const response = await fetch("/api/predict/", { method: "POST", body: formData });
 
             const data = await response.json();
             loadingSection.classList.add("hidden");
@@ -163,9 +99,7 @@ document.addEventListener("DOMContentLoaded", function () {
             document.getElementById("notfound-confidence").textContent = data.prediction.confidence;
             document.getElementById("new-class-id").textContent = data.prediction.class_id;
 
-            if (currentBase64) {
-                document.getElementById("new-avatar-preview").src = currentBase64;
-            } else if (currentFile) {
+            if (currentFile) {
                 const reader = new FileReader();
                 reader.onload = function (e) {
                     document.getElementById("new-avatar-preview").src = e.target.result;
@@ -192,8 +126,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
         if (currentFile) {
             formData.append("avatar", currentFile);
-        } else if (currentBase64) {
-            formData.append("avatar_base64", currentBase64);
         }
 
         try {
@@ -219,7 +151,6 @@ document.addEventListener("DOMContentLoaded", function () {
         previewContainer.classList.add("hidden");
         btnRecognize.disabled = true;
         currentFile = null;
-        currentBase64 = null;
         fileInput.value = "";
         document.getElementById("new-title").value = "";
         document.getElementById("result-confidence-bar").style.width = "0%";

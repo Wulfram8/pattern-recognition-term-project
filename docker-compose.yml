@@ -12,9 +12,10 @@ services:
       - DJANGO_DEBUG=True
       - DJANGO_SECRET_KEY=docker-dev-secret-key-change-in-production
       - CHECKPOINT_PATH=/app/model/checkpoints/cosface_best.pt
-      - GALLERY_ROOT=/app/data
+      - GALLERY_ROOT=/app/data/identities
       - DATA_ROOT=/app/data
       - DJANGO_SUPERUSER_EMAIL=admin@example.com
+      - DJANGO_SUPERUSER_USERNAME=admin
       - DJANGO_SUPERUSER_PASSWORD=admin123
     restart: unless-stopped
 

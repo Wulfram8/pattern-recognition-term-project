@@ -4,8 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="AI-powered identity recognition using face analysis. Upload an image or use your webcam to identify people.">
-    <title>Identity Recognition</title>
+    <meta name="description" content="AI-powered face identification using deep learning. Upload an image to identify people.">
+    <title>Face Identification</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -154,9 +154,7 @@
             to { transform: rotate(360deg); }
         }
 
-        .webcam-video {
-            transform: scaleX(-1);
-        }
+
 
         input[type="text"] {
             background: rgba(30, 41, 59, 0.8);
@@ -170,10 +168,7 @@
             box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
         }
 
-        .modal-backdrop {
-            background: rgba(2, 6, 23, 0.8);
-            backdrop-filter: blur(4px);
-        }
+
     </style>
 </head>
 <body class="bg-mesh text-slate-200 antialiased">
@@ -186,11 +181,11 @@
                     <i data-lucide="scan-face" class="w-5 h-5 text-white"></i>
                 </div>
                 <h1 class="text-3xl md:text-4xl font-bold bg-gradient-to-r from-violet-400 via-purple-400 to-blue-400 bg-clip-text text-transparent">
-                    Identity Recognition
+                    Face Identification
                 </h1>
             </div>
             <p class="text-slate-400 text-sm md:text-base max-w-lg mx-auto">
-                Upload an image or use your webcam to identify people using AI-powered face recognition
+                Upload an image to identify people using AI-powered face identification
             </p>
         </header>
 
@@ -218,10 +213,6 @@
                 </div>
 
                 <div class="flex flex-col sm:flex-row gap-3">
-                    <button id="btn-webcam" class="btn-secondary flex-1 py-3 px-5 rounded-xl text-sm font-medium text-slate-200 flex items-center justify-center gap-2">
-                        <i data-lucide="camera" class="w-4 h-4"></i>
-                        Use Webcam
-                    </button>
                     <button id="btn-recognize" class="btn-primary flex-1 py-3 px-5 rounded-xl text-sm font-medium text-white flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
                         <i data-lucide="search" class="w-4 h-4"></i>
                         Recognize Identity
@@ -332,32 +323,12 @@
         </main>
 
         <footer class="py-6 text-center text-slate-600 text-xs">
-            <p>Powered by CosFace &middot; ResNet-50 Embedding Network</p>
+            <p>Powered by CosFace &middot; ResNet-34 Embedding Network</p>
         </footer>
 
     </div>
 
-    <div id="webcam-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-backdrop">
-        <div class="glass rounded-2xl p-6 w-full max-w-lg mx-4">
-            <div class="flex items-center justify-between mb-4">
-                <div class="flex items-center gap-2">
-                    <i data-lucide="camera" class="w-5 h-5 text-violet-400"></i>
-                    <h2 class="text-lg font-semibold text-slate-100">Webcam Capture</h2>
-                </div>
-                <button id="btn-webcam-close" class="p-2 rounded-lg hover:bg-slate-700/50 transition-colors">
-                    <i data-lucide="x" class="w-5 h-5 text-slate-400"></i>
-                </button>
-            </div>
-            <div class="rounded-xl overflow-hidden bg-black mb-4 aspect-video relative">
-                <video id="webcam-video" class="webcam-video w-full h-full object-cover" autoplay playsinline></video>
-                <canvas id="webcam-canvas" class="hidden"></canvas>
-            </div>
-            <button id="btn-webcam-capture" class="btn-primary w-full py-3 px-5 rounded-xl text-sm font-medium text-white flex items-center justify-center gap-2">
-                <i data-lucide="aperture" class="w-4 h-4"></i>
-                Capture Photo
-            </button>
-        </div>
-    </div>
+
 
     <script src="{% static 'recognition/app.js' %}"></script>
     <script>lucide.createIcons();</script>
