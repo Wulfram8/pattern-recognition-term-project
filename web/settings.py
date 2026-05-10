@@ -80,8 +80,3 @@ GALLERY_ROOT = os.environ.get(
     "GALLERY_ROOT",
     str(BASE_DIR / "data" / "identities"),
 )
-
-DATA_ROOT = os.environ.get(
-    "DATA_ROOT",
-    str(BASE_DIR / "data"),
-)

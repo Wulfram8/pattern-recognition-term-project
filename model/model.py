@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -209,6 +208,7 @@ class FaceIdentificationService:
 
     @torch.no_grad()
     def embed_image(self, image: Image.Image) -> torch.Tensor:
+        self.model.eval()
         x = self.preprocess(image)
         out = self.model.encoder(x)
         return out["embeddings"]  # already L2-normalized
@@ -353,6 +353,26 @@ class FaceIdentificationService:
         if self.gallery_prototypes is not None:
             self.gallery_prototypes = F.normalize(
                 self.gallery_prototypes.float(), p=2, dim=1)
+
+    def add_to_gallery(self, label: str, image: Image.Image) -> Dict[str, Any]:
+        emb = self.embed_image(image).detach().cpu()
+        proto = F.normalize(emb, p=2, dim=1).squeeze(0)
+
+        if label in self.gallery_labels:
+            idx = self.gallery_labels.index(label)
+            old_proto = self.gallery_prototypes[idx]
+            new_proto = F.normalize((old_proto + proto).unsqueeze(0), p=2, dim=1).squeeze(0)
+            self.gallery_prototypes[idx] = new_proto
+            return {"action": "updated", "label": label, "gallery_size": len(self.gallery_labels)}
+
+        self.gallery_labels.append(label)
+        if self.gallery_prototypes is None:
+            self.gallery_prototypes = proto.unsqueeze(0)
+        else:
+            self.gallery_prototypes = torch.cat(
+                [self.gallery_prototypes, proto.unsqueeze(0)], dim=0
+            )
+        return {"action": "added", "label": label, "gallery_size": len(self.gallery_labels)}
 
     def info(self) -> Dict[str, Any]:
         return {

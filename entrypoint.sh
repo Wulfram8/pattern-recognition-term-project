@@ -17,6 +17,6 @@ python manage.py collectstatic --noinput
 echo "Starting server..."
 exec gunicorn web.wsgi:application \
     --bind 0.0.0.0:8000 \
-    --workers 2 \
+    --workers 1 \
     --timeout 120 \
     --access-logfile -

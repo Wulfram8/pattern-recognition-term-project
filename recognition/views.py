@@ -1,7 +1,11 @@
 import base64
 import json
+import os
 from io import BytesIO
+from pathlib import Path
 
+from django.conf import settings
+from django.core.files.base import ContentFile
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
@@ -48,12 +52,27 @@ def api_predict(request):
 
     identity = Identity.objects.filter(class_id=predicted_class_id).first()
 
+    topk_list = []
+    for item in result.get("topk", []):
+        db_identity = Identity.objects.filter(class_id=item["identity"]).first()
+        entry = {
+            "rank": item["rank"],
+            "class_id": item["identity"],
+            "confidence": round(item["probability"] * 100, 2),
+            "cosine_similarity": round(item.get("cosine_similarity", 0), 4),
+        }
+        if db_identity:
+            entry["title"] = db_identity.title
+            entry["avatar_url"] = db_identity.avatar.url if db_identity.avatar else None
+        topk_list.append(entry)
+
     response_data = {
         "prediction": {
             "class_id": predicted_class_id,
             "confidence": round(confidence * 100, 2),
             "cosine_similarity": result["prediction"].get("cosine_similarity", 0),
         },
+        "topk": topk_list,
         "identity_found": identity is not None,
     }
 
@@ -82,21 +101,39 @@ def api_add_identity(request):
     if Identity.objects.filter(class_id=class_id).exists():
         return JsonResponse({"error": "Identity with this class_id already exists."}, status=400)
 
+    image_bytes = None
     identity = Identity(title=title, class_id=class_id)
 
     if avatar_file:
+        raw = avatar_file.read()
+        image_bytes = raw
+        avatar_file.seek(0)
         identity.avatar.save(f"{class_id}.jpg", avatar_file, save=False)
     elif avatar_base64:
         try:
-            if "," in avatar_base64:
-                avatar_base64 = avatar_base64.split(",", 1)[1]
-            image_bytes = base64.b64decode(avatar_base64)
-            from django.core.files.base import ContentFile
+            b64 = avatar_base64
+            if "," in b64:
+                b64 = b64.split(",", 1)[1]
+            image_bytes = base64.b64decode(b64)
             identity.avatar.save(f"{class_id}.jpg", ContentFile(image_bytes), save=False)
         except Exception:
             return JsonResponse({"error": "Invalid avatar image data."}, status=400)
 
     identity.save()
+
+    if image_bytes:
+        try:
+            gallery_dir = Path(settings.GALLERY_ROOT) / class_id
+            gallery_dir.mkdir(parents=True, exist_ok=True)
+            gallery_path = gallery_dir / f"{class_id}_001.jpg"
+            with open(gallery_path, "wb") as f:
+                f.write(image_bytes)
+
+            service = get_service()
+            pil_image = Image.open(BytesIO(image_bytes))
+            service.add_to_gallery(class_id, pil_image)
+        except Exception:
+            pass
 
     return JsonResponse({
         "success": True,
