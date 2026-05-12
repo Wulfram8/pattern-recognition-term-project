@@ -152,20 +152,19 @@ class FaceIdentificationService:
 
         ckpt = safe_torch_load(str(ckpt_path), map_location="cpu")
 
-        # The notebook saves: model_name, epoch, best_val_top1,
-        # model_state_dict, optimizer_state_dict, scheduler_state_dict,
-        # cfg (dataclass as dict), num_classes.
         if "model_state_dict" not in ckpt:
             raise KeyError(
                 "This app expects the checkpoint from the training notebook with key "
                 "'model_state_dict'. Found keys: " + str(list(ckpt.keys()))
             )
 
-        self.cfg = ckpt.get("cfg", {}) or {}
+        self.cfg = ckpt.get("cfg")
+        if self.cfg is None:
+            raise KeyError("Checkpoint does not contain cfg.")
+            
         self.model_name = str(ckpt.get("model_name", "cosface")).lower()
         self.num_classes = int(ckpt.get("num_classes", 0))
 
-        # Read hyper-parameters from the saved config
         backbone = str(read_cfg(self.cfg, "backbone", "resnet34"))
         emb_dim = int(read_cfg(self.cfg, "embedding_dim", 512))
         dropout = float(read_cfg(self.cfg, "dropout", 0.10))
@@ -173,7 +172,6 @@ class FaceIdentificationService:
         cosface_s = float(read_cfg(self.cfg, "cosface_s", 48.0))
         cosface_m = float(read_cfg(self.cfg, "cosface_m", 0.25))
 
-        # If num_classes wasn't saved, try to infer from head weight shape
         if self.num_classes == 0:
             state = strip_module_prefix(ckpt["model_state_dict"])
             for key in ("head.weight",):
@@ -211,20 +209,10 @@ class FaceIdentificationService:
         self.model.eval()
         x = self.preprocess(image)
         out = self.model.encoder(x)
-        return out["embeddings"]  # already L2-normalized
-
-    # ------------------------------------------------------------------
-    # Prediction / identification
-    # ------------------------------------------------------------------
+        return out["embeddings"]
 
     @torch.no_grad()
     def predict(self, image: Image.Image, top_k: int = 5) -> Dict[str, Any]:
-        """Identify a face using Prototype-Centroid Retrieval.
-
-        The CosFace backbone is used purely as an embedding extractor.
-        Identification is performed by computing cosine similarity between
-        the probe embedding and each gallery identity centroid (prototype).
-        """
         top_k = max(1, min(int(top_k), 20))
         emb = self.embed_image(image)
 
@@ -241,11 +229,9 @@ class FaceIdentificationService:
                 "error": "Gallery not loaded. No identities to match against.",
             }
 
-        # Cosine similarity between probe and every gallery centroid
         prototypes = self.gallery_prototypes.to(self.device)
         sims = (emb @ prototypes.T).squeeze(0)
 
-        # Temperature-scaled softmax gives probability-like confidence scores
         gallery_probs = torch.softmax(sims * 30.0, dim=0)
 
         g_values, g_indices = torch.topk(
@@ -361,7 +347,8 @@ class FaceIdentificationService:
         if label in self.gallery_labels:
             idx = self.gallery_labels.index(label)
             old_proto = self.gallery_prototypes[idx]
-            new_proto = F.normalize((old_proto + proto).unsqueeze(0), p=2, dim=1).squeeze(0)
+            new_proto = F.normalize(
+                (old_proto + proto).unsqueeze(0), p=2, dim=1).squeeze(0)
             self.gallery_prototypes[idx] = new_proto
             return {"action": "updated", "label": label, "gallery_size": len(self.gallery_labels)}
 
